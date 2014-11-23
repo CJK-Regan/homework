@@ -21,11 +21,12 @@ int polynomialDiv(int a, int b) {
     return i | polynomialDiv(a ^ b, tmp);
 }
 
-int polynomialMul(int a, int b) {
+int polynomialMul(int a, int b, bool GF=false) {
     int result = 0;
     while (b) {
         if (b & 1) result ^= a;
         a <<= 1;
+        if (GF && a & 0x100) a ^= 0x11b;
         b >>= 1;
     }
     return result;
@@ -68,9 +69,86 @@ void expandKey() {
     }
 }
 
-void encrypt() {}
+void addRoundKey(int n) {
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++)
+            state[i][j] ^= key[n][i][j];
+}
 
-void decrypt() {}
+void substituteBytes() {
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++)
+            state[i][j] = sBox[state[i][j]];
+}
+
+void shiftRows() {
+    unsigned char tmp[4];
+    for (int i = 1; i < 4; i++) {
+        for (int j = 0; j < 4; j++)
+            tmp[j] = state[i][(i + j) % 4];
+        for (int j = 0; j < 4; j++)
+            state[i][j] = tmp[j];
+    }
+}
+
+void mixColumns() {
+    unsigned char tmp[4];
+    for (int i = 1; i < 4; i++) {
+        for (int j = 0; j < 4; j++)
+            tmp[j] = state[j][i];
+        for (int j = 0; j < 4; j++)
+            state[j][i] = polynomialMul(2, tmp[j], true) ^
+                          polynomialMul(3, tmp[(j + 1) % 4], true) ^
+                          polynomialMul(1, tmp[(j + 2) % 4], true) ^
+                          polynomialMul(1, tmp[(j + 3) % 4], true);
+    }
+}
+
+void encrypt() {
+    for (int i = 0; plain[i]; i += 16) {
+        for (int j = 0; j < 4; j++)
+            for (int k = 0; k < 4; k++)
+                state[k][j] = plain[i + 4 * j + k];
+
+        addRoundKey(0);
+        for (int r = 1; r <= 10; r++) {
+            substituteBytes();
+            shiftRows();
+            if (r != 10) mixColumns();
+            addRoundKey(r);
+        }
+
+        for (int j = 0; j < 4; j++)
+            for (int k = 0; k < 4; k++)
+                cipher[i + 4 * j + k] = state[k][j];
+    }
+}
+
+void invShiftRows() {}
+
+void invSubstituteBytes() {}
+
+void invMixColumns() {}
+
+void decrypt() {
+    for (int i = 0; cipher[i]; i += 16) {
+        for (int j = 0; j < 4; j++)
+            for (int k = 0; k < 4; k++)
+                state[k][j] = cipher[i + 4 * j + k];
+
+        addRoundKey(10);
+        for (int r = 9; r >= 0; r--) {
+            invShiftRows();
+            invSubstituteBytes();
+            addRoundKey(r);
+            if (r) invMixColumns();
+        }
+
+        for (int j = 0; j < 4; j++)
+            for (int k = 0; k < 4; k++)
+                plain[i + 4 * j + k] = state[k][j];
+    }
+}
 
 int main() {
     gensBox();
@@ -118,5 +196,10 @@ int main() {
     getchar();
     cin.getline(plain, BUFFLEN);
 
-    cipher();
+    encrypt();
+
+    for (int i = 0; cipher[i]; i++) {
+        if ((unsigned char)cipher[i] < 16) cout << "0";
+        cout << hex << int((unsigned char)cipher[i]) << " ";
+    }
 }
