@@ -1,10 +1,12 @@
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 using namespace std;
 
 #define BUFFLEN 256
 
-char plain[BUFFLEN], cipher[BUFFLEN];
+char plain[BUFFLEN], cipher[BUFFLEN], ctrPlain[BUFFLEN];
+int counterSize;
 unsigned char sBox[256], invsBox[256], key[11][4][4], state[4][4];
 unsigned char rc[10] = {
     0x01, 0x02, 0x04, 0x08, 0x10,
@@ -52,7 +54,7 @@ void expandKey() {
     for (int i = 1; i <= 10; i++) {
         for (int j = 0; j < 4; j++) {
             unsigned char byte[4];
-            for (int k = 0; k < 0; k++)
+            for (int k = 0; k < 4; k++)
                 byte[k] = j ? key[i][k][j - 1] : key[i - 1][k][3];
 
             if (j == 0) {
@@ -75,32 +77,40 @@ void addRoundKey(int n) {
             state[i][j] ^= key[n][i][j];
 }
 
-void substituteBytes() {
+void substituteBytes(bool inv=false) {
     for (int i = 0; i < 4; i++)
         for (int j = 0; j < 4; j++)
-            state[i][j] = sBox[state[i][j]];
+            if (inv) state[i][j] = invsBox[state[i][j]];
+            else state[i][j] = sBox[state[i][j]];
 }
 
-void shiftRows() {
+void shiftRows(bool inv=false) {
     unsigned char tmp[4];
     for (int i = 1; i < 4; i++) {
         for (int j = 0; j < 4; j++)
-            tmp[j] = state[i][(i + j) % 4];
+            if (inv) tmp[j] = state[i][(j - i + 4) % 4];
+            else tmp[j] = state[i][(i + j) % 4];
         for (int j = 0; j < 4; j++)
             state[i][j] = tmp[j];
     }
 }
 
-void mixColumns() {
+void mixColumns(bool inv=false) {
     unsigned char tmp[4];
     for (int i = 1; i < 4; i++) {
         for (int j = 0; j < 4; j++)
             tmp[j] = state[j][i];
         for (int j = 0; j < 4; j++)
-            state[j][i] = polynomialMul(2, tmp[j], true) ^
-                          polynomialMul(3, tmp[(j + 1) % 4], true) ^
-                          polynomialMul(1, tmp[(j + 2) % 4], true) ^
-                          polynomialMul(1, tmp[(j + 3) % 4], true);
+            if (inv)
+                state[j][i] = polynomialMul(0xe, tmp[j], true) ^
+                              polynomialMul(0xb, tmp[(j + 1) % 4], true) ^
+                              polynomialMul(0xd, tmp[(j + 2) % 4], true) ^
+                              polynomialMul(0x9, tmp[(j + 3) % 4], true);
+            else
+                state[j][i] = polynomialMul(2, tmp[j], true) ^
+                              polynomialMul(3, tmp[(j + 1) % 4], true) ^
+                              polynomialMul(1, tmp[(j + 2) % 4], true) ^
+                              polynomialMul(1, tmp[(j + 3) % 4], true);
     }
 }
 
@@ -124,12 +134,6 @@ void encrypt() {
     }
 }
 
-void invShiftRows() {}
-
-void invSubstituteBytes() {}
-
-void invMixColumns() {}
-
 void decrypt() {
     for (int i = 0; cipher[i]; i += 16) {
         for (int j = 0; j < 4; j++)
@@ -138,10 +142,10 @@ void decrypt() {
 
         addRoundKey(10);
         for (int r = 9; r >= 0; r--) {
-            invShiftRows();
-            invSubstituteBytes();
+            shiftRows(true);
+            substituteBytes(true);
             addRoundKey(r);
-            if (r) invMixColumns();
+            if (r) mixColumns(true);
         }
 
         for (int j = 0; j < 4; j++)
@@ -150,11 +154,18 @@ void decrypt() {
     }
 }
 
+void ctr() {
+    for (int i = 0; ctrPlain[i]; i += counterSize)
+        for (int j = 0; j < counterSize && i + j < strlen(ctrPlain); j++)
+            ctrPlain[i + j] ^= cipher[j];
+}
+
 int main() {
     gensBox();
 
     //Print sBox and invsBox.
 
+    //cout << "S Box:" << endl;
     //for (int i = 0; i < 256; i += 16) {
     //    for (int j = i; j < i + 16; j++) {
     //        if (sBox[j] < 16) cout << "0";
@@ -162,7 +173,7 @@ int main() {
     //    }
     //    cout << endl;
     //}
-    //cout << endl;
+    //cout << "Inverse S Box:" << endl;
     //for (int i = 0; i < 256; i += 16) {
     //    for (int j = i; j < i + 16; j++) {
     //        if (invsBox[j] < 16) cout << "0";
@@ -171,7 +182,7 @@ int main() {
     //    cout << endl;
     //}
 
-    cout << "Please input key (16 bytes): ";
+    cout << "Please input key (16 bytes):" << endl;
 
     for (int i = 0; i < 4; i++)
         for (int j = 0; j < 4; j++)
@@ -181,6 +192,7 @@ int main() {
 
     //Print round keys.
     
+    //cout << "Round keys:" << endl;
     //for (int i = 0; i < 11; i++) {
     //    for (int j = 0; j < 4; j++) {
     //        for (int k = 0; k < 4; k++) {
@@ -198,8 +210,54 @@ int main() {
 
     encrypt();
 
-    for (int i = 0; cipher[i]; i++) {
-        if ((unsigned char)cipher[i] < 16) cout << "0";
-        cout << hex << int((unsigned char)cipher[i]) << " ";
+    //Print cipher text.
+
+    cout << "Cipher text (in hex):" << endl;
+    for (int i = 0; cipher[i]; i += 16) {
+        for (int j = i; j < i + 16; j++) {
+            if ((unsigned char)cipher[j] < 16) cout << "0";
+            cout << hex << int((unsigned char)cipher[j]) << " ";
+        }
+        cout << endl;
     }
+    
+    memset(plain, 0, sizeof(plain));
+    decrypt();
+
+    //Print plain text.
+
+    cout << "Plain text after decryption:" << endl;
+    cout << plain << endl;
+
+    //CTR mode
+
+    memset(plain, 0, sizeof(plain));
+    memset(cipher, 0, sizeof(cipher));
+
+    cout << "Please input plain text of CTR mode:" << endl;
+    cin.getline(ctrPlain, BUFFLEN);
+    cout << "Please input counter size of CTR mode:" << endl;
+    cin >> counterSize;
+    cout << "Please input counter of CTR mode (" << counterSize << " bytes):"
+         << endl;
+    getchar();
+    cin.getline(plain, BUFFLEN);
+
+    encrypt();
+
+    ctr();
+
+    cout << "Cipher text of CTR mode (in hex):" << endl;
+    for (int i = 0; ctrPlain[i]; i += counterSize) {
+        for (int j = i; j < i + counterSize && ctrPlain[j]; j++) {
+            if ((unsigned char)ctrPlain[j] < 16) cout << "0";
+            cout << hex << int((unsigned char)ctrPlain[j]) << " ";
+        }
+        cout << endl;
+    }
+
+    ctr();
+
+    cout << "Plain text after decryption of CTR mode:" << endl;
+    cout << ctrPlain << endl;
 }
